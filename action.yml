@@ -1,0 +1,236 @@
+name: 'Abloh'
+description: >-
+  Run Abloh against the exact pull-request head after the repository's normal
+  checkout, runtime setup, dependency installation, and service setup. Produces
+  attest-results/v2 JSON, Markdown, and digest-bound raw evidence.
+inputs:
+  repo-path:
+    description: 'Path to the repository to attest, relative to the workspace.'
+    required: false
+    default: '.'
+  subdir:
+    description: >-
+      Non-PR package-path override. pull_request runs refuse this input and use
+      target.directory from the trusted merge-base abloh.yml; when that is absent, a
+      workspace-root run auto-selects the package when the PR's changed files all fall
+      inside exactly one workspace package (recorded as targetSelection: auto-diff).
+    required: false
+    default: ''
+  base:
+    description: >-
+      Optional base ref outside pull requests. On a pull request Abloh derives and verifies
+      github.event.pull_request.base.sha; a supplied value must resolve to that same commit.
+    required: false
+    default: ''
+  tier:
+    description: >-
+      Non-PR data-flow tier override: 0, 1, or 2. pull_request runs refuse this input and
+      use the trusted merge-base abloh.yml.
+    required: false
+    default: ''
+  policy:
+    description: >-
+      Non-PR path to abloh.yml. pull_request runs refuse this input and resolve
+      <repo-path>/abloh.yml from the trusted merge base.
+    required: false
+    default: ''
+  environment-image:
+    description: >-
+      Non-PR immutable sandbox-proof image override (name@sha256:digest). pull_request runs
+      refuse this input and use environment.runtimeImage from the trusted merge-base policy.
+    required: false
+    default: ''
+  test-command:
+    description: >-
+      Non-PR exact JavaScript/TypeScript test-command override. pull_request runs refuse this
+      input and use environment.testCommand from the trusted merge-base policy.
+    required: false
+    default: ''
+  seed:
+    description: >-
+      Non-PR hex seed override for deterministic replay. pull_request runs refuse this input;
+      Abloh mints and records the run seed so a changed workflow cannot select its own mutants.
+    required: false
+    default: ''
+  cli-tarball:
+    description: >-
+      URL or filesystem path of the packed Abloh CLI tarball (the output of
+      `pnpm pack` in apps/cli). REQUIRED for now: the CLI is not yet published to a
+      registry, so this action installs the CLI into a private runner-temporary prefix. Because the
+      CLI's @attest workspace dependencies are equally unpublished, pass their tarballs
+      too, space-separated after the CLI tarball — npm resolves the CLI's dependencies
+      from the sibling tarballs on the same install. At GA a published release
+      (`npm install -g @abloh/cli@<version>`) replaces this input; see README.md.
+    required: true
+  handoff-url:
+    description: >-
+      Abloh evidence handoff endpoint — `https://api.abloh.dev/api/v1/runs` for everyone.
+      When set together with `handoff-audience`, the Action posts the measured evidence
+      itself, authenticated by a short-lived GitHub OIDC identity minted after
+      measurement — no API key is involved, and nothing long-lived exists in the job.
+      Omit both to measure only and leave the results on the runner for another job.
+
+      THE ADDRESS NO LONGER NAMES YOUR ORGANIZATION. It used to end `/orgs/<your-id>/runs`,
+      which meant this file had to contain an id you could only find after signing up — so
+      the first run of a newly installed App failed on its address. The control plane now
+      resolves the organization from the repository your OIDC token attests, through the
+      installation that covers it. The old form still works for workflows pinned to it.
+
+      A composite Action is inlined into your job, so GitHub attests the REPOSITORY and
+      commit but not whose code measured. The control plane records that distinction:
+      evidence from this path is graded `standard`, never `service-verified`.
+    required: false
+    default: ''
+  handoff-audience:
+    description: >-
+      OIDC audience the handoff endpoint expects. Required when `handoff-url` is set.
+    required: false
+    default: ''
+  model-gateway-url:
+    description: >-
+      HTTPS Abloh model-gateway endpoint. The gateway holds the provider credential;
+      this Action authenticates with a short-lived GitHub OIDC identity.
+
+      OPTIONAL. A tier-0 run spends no model budget — Layer 0, mutation and reverse-patch are all
+      mechanical — so it needs no gateway, and requiring one refused those runs outright. Omit it
+      and no model environment is passed to the CLI; a policy that names a hosted provider then
+      fails with `ATTEST_MODEL_ENDPOINT is not set`, at the point the model is actually wanted.
+    required: false
+  model-gateway-audience:
+    description: >-
+      OIDC audience published by the Abloh model gateway.
+    required: true
+outputs:
+  results-path:
+    description: 'Runner-local attest-results.json path for a later trusted handoff job.'
+    value: ${{ steps.environment_preflight.outputs.output-dir }}/attest-results.json
+  summary-path:
+    description: 'Runner-local Markdown summary path.'
+    value: ${{ steps.environment_preflight.outputs.output-dir }}/attest-summary.md
+runs:
+  using: 'composite'
+  steps:
+    - name: Verify caller-prepared environment
+      id: environment_preflight
+      shell: bash
+      env:
+        REPO_PATH: ${{ inputs.repo-path }}
+        GITHUB_EVENT_NAME: ${{ github.event_name }}
+        GITHUB_SHA_VALUE: ${{ github.sha }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        DECLARED_BASE: ${{ inputs.base }}
+        TIER: ${{ inputs.tier }}
+        SUBDIR: ${{ inputs.subdir }}
+        POLICY: ${{ inputs.policy }}
+        ENVIRONMENT_IMAGE: ${{ inputs.environment-image }}
+        TEST_COMMAND: ${{ inputs.test-command }}
+        SEED: ${{ inputs.seed }}
+        GITHUB_RUN_ID: ${{ github.run_id }}
+        GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+        MODEL_GATEWAY_URL: ${{ inputs.model-gateway-url }}
+        MODEL_GATEWAY_AUDIENCE: ${{ inputs.model-gateway-audience }}
+        # Checked here so a half-configured handoff fails before the suite runs, not after it.
+        HANDOFF_URL: ${{ inputs.handoff-url }}
+        HANDOFF_AUDIENCE: ${{ inputs.handoff-audience }}
+      run: |
+        set -euo pipefail
+        command -v node >/dev/null 2>&1 || { echo "set up the repository's pinned Node runtime before Abloh" >&2; exit 2; }
+        node "$GITHUB_ACTION_PATH/action-boundary.mjs" preflight
+    - name: Install Abloh CLI
+      id: cli_install
+      shell: bash
+      env:
+        CLI_TARBALL: ${{ inputs.cli-tarball }}
+        GITHUB_RUN_ID: ${{ github.run_id }}
+        GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+      run: |
+        set -euo pipefail
+        node "$GITHUB_ACTION_PATH/action-boundary.mjs" install-cli
+    - name: Prepare coverage provider cache
+      shell: bash
+      env:
+        GITHUB_EVENT_NAME: ${{ github.event_name }}
+        REPOSITORY_ROOT: ${{ steps.environment_preflight.outputs.repository-root }}
+        SUBDIR: ${{ inputs.subdir }}
+        ABLOH_CLI_PATH: ${{ steps.cli_install.outputs.path }}
+        ABLOH_CLI_PREFIX: ${{ steps.cli_install.outputs.prefix }}
+        ABLOH_COVERAGE_PROVIDER_CACHE_DIR: ${{ steps.environment_preflight.outputs.coverage-cache-dir }}
+      run: |
+        set -euo pipefail
+        node "$GITHUB_ACTION_PATH/action-boundary.mjs" prepare
+    - name: Restore exact-commit baseline history
+      id: baseline_history_restore
+      uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+      with:
+        path: ${{ steps.environment_preflight.outputs.baseline-dir }}
+        key: abloh-baseline-v1-${{ runner.os }}-${{ github.repository_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          abloh-baseline-v1-${{ runner.os }}-${{ github.repository_id }}-
+    - name: Run Abloh
+      shell: bash
+      env:
+        GITHUB_EVENT_NAME: ${{ github.event_name }}
+        REPOSITORY_ROOT: ${{ steps.environment_preflight.outputs.repository-root }}
+        SUBDIR: ${{ inputs.subdir }}
+        BASE: ${{ steps.environment_preflight.outputs.base }}
+        HEAD_SHA: ${{ steps.environment_preflight.outputs.head }}
+        TIER: ${{ inputs.tier }}
+        POLICY: ${{ inputs.policy }}
+        ENVIRONMENT_IMAGE: ${{ inputs.environment-image }}
+        TEST_COMMAND: ${{ inputs.test-command }}
+        SEED: ${{ inputs.seed }}
+        ABLOH_CLI_PATH: ${{ steps.cli_install.outputs.path }}
+        ABLOH_CLI_PREFIX: ${{ steps.cli_install.outputs.prefix }}
+        ABLOH_OUTPUT_DIR: ${{ steps.environment_preflight.outputs.output-dir }}
+        ABLOH_BASELINE_HISTORY_DIR: ${{ steps.environment_preflight.outputs.baseline-dir }}
+        ABLOH_COVERAGE_PROVIDER_CACHE_DIR: ${{ steps.environment_preflight.outputs.coverage-cache-dir }}
+        MODEL_GATEWAY_URL: ${{ inputs.model-gateway-url }}
+        MODEL_GATEWAY_AUDIENCE: ${{ inputs.model-gateway-audience }}
+      run: |
+        set -euo pipefail
+        node "$GITHUB_ACTION_PATH/action-boundary.mjs" run
+    - name: Validate completed measurement artifact
+      id: artifact_state
+      if: >-
+        ${{ !cancelled()
+            && steps.environment_preflight.outputs.output-dir != '' }}
+      shell: bash
+      env:
+        ABLOH_OUTPUT_DIR: ${{ steps.environment_preflight.outputs.output-dir }}
+      run: |
+        set -euo pipefail
+        results="$(
+          ABLOH_ARTIFACT_NAME=attest-results.json \
+            node "$GITHUB_ACTION_PATH/action-boundary.mjs" validate-artifact
+        )"
+        if [ -n "$results" ]; then
+          echo "complete=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "complete=false" >> "$GITHUB_OUTPUT"
+        fi
+    - name: Upload measured evidence
+      # Only when the caller asked for it AND a completed artifact exists. `id-token: write` must be
+      # granted on the calling job for the identity below to be mintable.
+      if: >-
+        ${{ !cancelled()
+            && inputs.handoff-url != ''
+            && steps.artifact_state.outputs.complete == 'true' }}
+      shell: bash
+      env:
+        ABLOH_OUTPUT_DIR: ${{ steps.environment_preflight.outputs.output-dir }}
+        HANDOFF_URL: ${{ inputs.handoff-url }}
+        HANDOFF_AUDIENCE: ${{ inputs.handoff-audience }}
+        ABLOH_TRIGGER_SHA: ${{ github.sha }}
+        ABLOH_HEAD_SHA: ${{ steps.environment_preflight.outputs.head }}
+        ABLOH_PULL_REQUEST: ${{ github.event.pull_request.number }}
+      run: |
+        set -euo pipefail
+        node "$GITHUB_ACTION_PATH/action-boundary.mjs" upload
+
+    - name: Save exact-commit baseline history
+      if: ${{ always() && steps.artifact_state.outputs.complete == 'true' }}
+      uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+      with:
+        path: ${{ steps.environment_preflight.outputs.baseline-dir }}
+        key: abloh-baseline-v1-${{ runner.os }}-${{ github.repository_id }}-${{ github.run_id }}-${{ github.run_attempt }}
