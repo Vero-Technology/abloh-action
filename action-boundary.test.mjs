@@ -20,6 +20,7 @@ import {
   assertSupportedNodeVersion,
   buildPrepareArguments,
   buildRunArguments,
+  DEFAULT_CLI_SPEC,
   parsePackageSpecs,
   runAbloh,
   validateActionInputs,
@@ -497,6 +498,30 @@ test("CLI package specs are argument data and the executable must stay under its
     "https://example.invalid/two.tgz;touch-pwned",
   ]);
   assert.throws(() => parsePackageSpecs("--force"), /unsafe package spec/u);
+});
+
+/*
+ * NOTHING TO PACK, FOR THE FIRST TIME.
+ *
+ * `cli-tarball` was required because no part of Abloh was on npm: a caller had to pack the CLI and
+ * its six workspace dependencies and pass all seven paths, which is why our own e2e repository was
+ * the only one that could run this action. With @abloh/cli published, absent means "install the
+ * release".
+ */
+test("an absent cli-tarball installs the published release, pinned", () => {
+  assert.deepEqual(parsePackageSpecs(undefined), [DEFAULT_CLI_SPEC]);
+  assert.deepEqual(parsePackageSpecs(""), [DEFAULT_CLI_SPEC]);
+  assert.deepEqual(parsePackageSpecs("   "), [DEFAULT_CLI_SPEC]);
+  /* Pinned, never `latest`: a caller who pinned this action by SHA has already chosen which Abloh
+     they run, and resolving a floating tag would change that under them. */
+  assert.match(DEFAULT_CLI_SPEC, /^@abloh\/cli@\d+\.\d+\.\d+$/u);
+});
+
+test("an explicit cli-tarball still wins, for a build that is not on the registry", () => {
+  assert.deepEqual(parsePackageSpecs("./abloh-cli-0.1.0.tgz ./abloh-core-0.1.0.tgz"), [
+    "./abloh-cli-0.1.0.tgz",
+    "./abloh-core-0.1.0.tgz",
+  ]);
 });
 
 test("the executable installer keeps package specs literal and binds the CLI to private staging", () => {

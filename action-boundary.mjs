@@ -431,9 +431,24 @@ export function preflight(environment = process.env) {
   };
 }
 
+/**
+ * The published CLI this action installs when the caller names nothing.
+ *
+ * PINNED, not `latest`. This action is itself referenced by a 40-character commit SHA, so a caller
+ * who pinned it has already decided which Abloh they are running; resolving `latest` at run time
+ * would quietly change that for them. The version moves when a release moves it.
+ */
+export const DEFAULT_CLI_SPEC = "@abloh/cli@0.1.0";
+
 export function parsePackageSpecs(value) {
-  const input = required(value, "cli-tarball");
-  const specs = input.trim().split(/\s+/u);
+  /*
+   * `cli-tarball` was REQUIRED, because nothing was on npm: every caller had to pack the CLI and
+   * its six workspace dependencies and pass all seven paths. That is why the only repository that
+   * could run this action was ours. With @abloh/cli published, absent means "install the release".
+   */
+  const input = typeof value === "string" ? value.trim() : "";
+  if (input === "") return [DEFAULT_CLI_SPEC];
+  const specs = input.split(/\s+/u);
   if (specs.length === 0 || specs.length > 20) fail("cli-tarball must contain 1 to 20 package specs");
   for (const spec of specs) {
     if (spec.startsWith("-") || CONTROL.test(spec)) fail("cli-tarball contains an unsafe package spec");

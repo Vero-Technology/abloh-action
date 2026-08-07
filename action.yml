@@ -54,14 +54,16 @@ inputs:
     default: ''
   cli-tarball:
     description: >-
-      URL or filesystem path of the packed Abloh CLI tarball (the output of
-      `pnpm pack` in apps/cli). REQUIRED for now: the CLI is not yet published to a
-      registry, so this action installs the CLI into a private runner-temporary prefix. Because the
-      CLI's @attest workspace dependencies are equally unpublished, pass their tarballs
-      too, space-separated after the CLI tarball — npm resolves the CLI's dependencies
-      from the sibling tarballs on the same install. At GA a published release
-      (`npm install -g @abloh/cli@<version>`) replaces this input; see README.md.
-    required: true
+      Override the Abloh CLI this action installs. Leave it unset: the action installs the
+      published release, pinned to a version rather than to `latest`, into a private
+      runner-temporary prefix.
+
+      Set it only to run a CLI that is not on the registry — a release candidate, or a local
+      build. Takes one or more npm package specs (tarball paths or URLs), space-separated;
+      pass the dependencies alongside the CLI, because npm resolves them from the sibling
+      specs on the same install.
+    required: false
+    default: ""
   handoff-url:
     description: >-
       Abloh evidence handoff endpoint — `https://api.abloh.dev/api/v1/runs` for everyone.
