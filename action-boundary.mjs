@@ -438,7 +438,7 @@ export function preflight(environment = process.env) {
  * who pinned it has already decided which Abloh they are running; resolving `latest` at run time
  * would quietly change that for them. The version moves when a release moves it.
  */
-export const DEFAULT_CLI_SPEC = "@abloh/cli@0.1.1";
+export const DEFAULT_CLI_SPEC = "@abloh/cli@0.1.3";
 
 export function parsePackageSpecs(value) {
   /*
