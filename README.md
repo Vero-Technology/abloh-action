@@ -158,8 +158,12 @@ pinning the previous SHA. To update, review the diff between SHAs and move the p
 | `test-command` | no | — | Non-PR direct-command override only. PRs use trusted policy and refuse this input. |
 | `seed` | no | — | Non-PR replay override only. PRs mint and record a fresh run seed and refuse this input. |
 | `cli-tarball` | **yes, for now** | — | URL(s)/path(s) of the packed CLI tarball (`pnpm pack` output from `apps/cli`) installed into an Action-owned temporary prefix. Space-separate unpublished workspace-dependency tarballs. |
-| `model-gateway-url` | **yes** | — | Credential-free HTTPS endpoint for the Abloh model gateway. |
-| `model-gateway-audience` | **yes** | — | Audience the gateway requires in GitHub's short-lived OIDC identity. |
+
+The addresses this Action reports to — the evidence handoff endpoint, the model gateway, and the
+OIDC audience each one checks — are **not inputs**. They are constants of the deployment, resolved
+by the Action itself, so no workflow names them and no customer has to keep them correct. They were
+inputs, and one was wrong in the file the product handed out: the handoff audience read as a URL
+where the control plane compares against a fixed string and rejects anything else.
 
 ## Example workflow
 
@@ -189,8 +193,6 @@ jobs:
         with:
           base: ${{ github.event.pull_request.base.sha }}
           cli-tarball: ${{ vars.ATTEST_CLI_TARBALL_URL }}
-          model-gateway-url: ${{ vars.ABLOH_MODEL_GATEWAY_URL }}
-          model-gateway-audience: ${{ vars.ABLOH_MODEL_GATEWAY_AUDIENCE }}
 ```
 
 The setup commands above are examples, not commands owned by Abloh. A repository should

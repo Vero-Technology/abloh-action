@@ -64,44 +64,6 @@ inputs:
       specs on the same install.
     required: false
     default: ""
-  handoff-url:
-    description: >-
-      Abloh evidence handoff endpoint — `https://api.abloh.dev/api/v1/runs` for everyone.
-      When set together with `handoff-audience`, the Action posts the measured evidence
-      itself, authenticated by a short-lived GitHub OIDC identity minted after
-      measurement — no API key is involved, and nothing long-lived exists in the job.
-      Omit both to measure only and leave the results on the runner for another job.
-
-      THE ADDRESS NO LONGER NAMES YOUR ORGANIZATION. It used to end `/orgs/<your-id>/runs`,
-      which meant this file had to contain an id you could only find after signing up — so
-      the first run of a newly installed App failed on its address. The control plane now
-      resolves the organization from the repository your OIDC token attests, through the
-      installation that covers it. The old form still works for workflows pinned to it.
-
-      A composite Action is inlined into your job, so GitHub attests the REPOSITORY and
-      commit but not whose code measured. The control plane records that distinction:
-      evidence from this path is graded `standard`, never `service-verified`.
-    required: false
-    default: ''
-  handoff-audience:
-    description: >-
-      OIDC audience the handoff endpoint expects. Required when `handoff-url` is set.
-    required: false
-    default: ''
-  model-gateway-url:
-    description: >-
-      HTTPS Abloh model-gateway endpoint. The gateway holds the provider credential;
-      this Action authenticates with a short-lived GitHub OIDC identity.
-
-      OPTIONAL. A tier-0 run spends no model budget — Layer 0, mutation and reverse-patch are all
-      mechanical — so it needs no gateway, and requiring one refused those runs outright. Omit it
-      and no model environment is passed to the CLI; a policy that names a hosted provider then
-      fails with `ATTEST_MODEL_ENDPOINT is not set`, at the point the model is actually wanted.
-    required: false
-  model-gateway-audience:
-    description: >-
-      OIDC audience published by the Abloh model gateway.
-    required: true
 outputs:
   results-path:
     description: 'Runner-local attest-results.json path for a later trusted handoff job.'
@@ -112,6 +74,33 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    # ---------------------------------------------------------------------------------------
+    # WHERE THIS RUN REPORTS TO — ours to know, not the customer's to write.
+    #
+    # These four were inputs, so every workflow we handed out carried two of our URLs and two
+    # opaque strings, and the customer had to keep them right. Nobody can: they are not
+    # discoverable, they are identical for every customer, and one of them was WRONG in the
+    # file the product itself handed out — `handoff-audience` read `https://api.abloh.dev`
+    # while the control plane compares against `abloh-evidence-handoff` and rejects anything
+    # else, so every upload from a copy-pasted workflow would have been refused.
+    #
+    # They are constants of the deployment now. A customer's workflow names none of them, and
+    # an endpoint moves by releasing this Action rather than by asking everybody to edit a file.
+    #
+    # The ABLOH_DEV_* overrides are not documented inputs and no customer sets them. They exist
+    # so our own dev environment, whose control plane is a tunnel rather than api.abloh.dev,
+    # can run this same Action from a branch without a second copy of it.
+    # ---------------------------------------------------------------------------------------
+    - name: Resolve the control plane this run reports to
+      shell: bash
+      run: |
+        set -euo pipefail
+        {
+          echo "HANDOFF_URL=${ABLOH_DEV_HANDOFF_URL:-https://api.abloh.dev/api/v1/runs}"
+          echo "HANDOFF_AUDIENCE=${ABLOH_DEV_HANDOFF_AUDIENCE:-abloh-evidence-handoff}"
+          echo "MODEL_GATEWAY_URL=${ABLOH_DEV_MODEL_GATEWAY_URL:-https://api.abloh.dev/api/v1/model/chat/completions}"
+          echo "MODEL_GATEWAY_AUDIENCE=${ABLOH_DEV_MODEL_GATEWAY_AUDIENCE:-abloh-model-gateway}"
+        } >> "$GITHUB_ENV"
     - name: Verify caller-prepared environment
       id: environment_preflight
       shell: bash
@@ -130,11 +119,11 @@ runs:
         SEED: ${{ inputs.seed }}
         GITHUB_RUN_ID: ${{ github.run_id }}
         GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
-        MODEL_GATEWAY_URL: ${{ inputs.model-gateway-url }}
-        MODEL_GATEWAY_AUDIENCE: ${{ inputs.model-gateway-audience }}
-        # Checked here so a half-configured handoff fails before the suite runs, not after it.
-        HANDOFF_URL: ${{ inputs.handoff-url }}
-        HANDOFF_AUDIENCE: ${{ inputs.handoff-audience }}
+        # MODEL_GATEWAY_URL, MODEL_GATEWAY_AUDIENCE, HANDOFF_URL and HANDOFF_AUDIENCE are not
+        # listed here any more. The step above wrote them to the job environment, which every
+        # step below inherits — naming them again would be four more places to keep in step.
+        # The preflight still reads them, so a handoff that cannot work fails before the suite
+        # runs rather than after it.
       run: |
         set -euo pipefail
         command -v node >/dev/null 2>&1 || { echo "set up the repository's pinned Node runtime before Abloh" >&2; exit 2; }
@@ -187,8 +176,7 @@ runs:
         ABLOH_OUTPUT_DIR: ${{ steps.environment_preflight.outputs.output-dir }}
         ABLOH_BASELINE_HISTORY_DIR: ${{ steps.environment_preflight.outputs.baseline-dir }}
         ABLOH_COVERAGE_PROVIDER_CACHE_DIR: ${{ steps.environment_preflight.outputs.coverage-cache-dir }}
-        MODEL_GATEWAY_URL: ${{ inputs.model-gateway-url }}
-        MODEL_GATEWAY_AUDIENCE: ${{ inputs.model-gateway-audience }}
+        # MODEL_GATEWAY_URL and MODEL_GATEWAY_AUDIENCE arrive from the job environment.
       run: |
         set -euo pipefail
         node "$GITHUB_ACTION_PATH/action-boundary.mjs" run
@@ -212,17 +200,17 @@ runs:
           echo "complete=false" >> "$GITHUB_OUTPUT"
         fi
     - name: Upload measured evidence
-      # Only when the caller asked for it AND a completed artifact exists. `id-token: write` must be
-      # granted on the calling job for the identity below to be mintable.
+      # Whenever a completed artifact exists. It used to also require a non-empty handoff-url,
+      # which was the caller opting in; there is no such input now and the address is always
+      # known, so the only question left is whether there is anything to send. `id-token: write`
+      # must be granted on the calling job for the identity below to be mintable.
       if: >-
         ${{ !cancelled()
-            && inputs.handoff-url != ''
             && steps.artifact_state.outputs.complete == 'true' }}
       shell: bash
       env:
         ABLOH_OUTPUT_DIR: ${{ steps.environment_preflight.outputs.output-dir }}
-        HANDOFF_URL: ${{ inputs.handoff-url }}
-        HANDOFF_AUDIENCE: ${{ inputs.handoff-audience }}
+        # HANDOFF_URL and HANDOFF_AUDIENCE arrive from the job environment.
         ABLOH_TRIGGER_SHA: ${{ github.sha }}
         ABLOH_HEAD_SHA: ${{ steps.environment_preflight.outputs.head }}
         ABLOH_PULL_REQUEST: ${{ github.event.pull_request.number }}
