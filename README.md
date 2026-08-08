@@ -125,19 +125,21 @@ a branch or tag:
 - uses: Vero-Technology/abloh-action@8f14e45fceea167a5a36dedd4bea2543c8b31a7d # pin: full 40-char SHA
   with:
     base: ${{ github.event.pull_request.base.sha }}
-    cli-tarball: >-
-      https://example.com/artifacts/abloh-cli-0.1.0.tgz
-      https://example.com/artifacts/attest-core-0.1.0.tgz
-      https://example.com/artifacts/attest-engine-stryker-0.1.0.tgz
-      https://example.com/artifacts/attest-triage-0.1.0.tgz
-      https://example.com/artifacts/attest-engine-python-0.1.0.tgz
-      https://example.com/artifacts/attest-github-app-0.1.0.tgz
 ```
 
-Until the restricted registry exists, the CLI's `@attest` workspace dependencies are not
-resolvable by name, so the `cli-tarball` input takes the CLI plus every unpublished
-workspace dependency referenced by that build, space-separated (CLI first). npm resolves
-the CLI's dependencies from the sibling tarballs in one private runner-temporary npm prefix.
+That is the whole step. The action installs the published `@abloh/cli` — pinned to a version in
+`action-boundary.mjs`, never `latest`, because a caller who pinned this action by SHA has already
+chosen which Abloh they run.
+
+`cli-tarball` overrides that, and exists for a build the registry does not have: a release
+candidate, or a local `pnpm pack`. It takes one or more npm package specs, space-separated, and
+npm resolves the CLI's dependencies from the sibling specs in one private runner-temporary prefix:
+
+```yaml
+    cli-tarball: >-
+      ./vendor/abloh-cli-0.1.2-rc.1.tgz
+      ./vendor/abloh-core-0.1.2-rc.1.tgz
+```
 
 The resolved SHA is recorded in the evidence as `runner.actionRef`, so the report
 identifies exactly which action code produced it. Rollback is the customer
