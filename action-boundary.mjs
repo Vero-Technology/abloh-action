@@ -812,6 +812,28 @@ export async function uploadEvidence(environment = process.env, fetchImpl = fetc
   } catch {
     fail("the evidence upload could not reach the control plane");
   }
+  if (response.status === 402) {
+    /*
+     * PLAN LIMIT — A NEUTRAL OUTCOME, NOT A FAILURE.
+     *
+     * The measurement already ran and said whatever it said; only the upload is declined, because
+     * this repository is beyond what the organization's plan covers. Failing the job here would put
+     * a red X on a pull request for a billing reason, on the very repository somebody was about to
+     * expand into — the product looking broken when nothing about their tests is wrong.
+     *
+     * This is the ONE case where the response body is surfaced. The rule below exists because a
+     * remote string in a public build log is how a service's internals leak; this message is one we
+     * author for exactly this purpose, and it is bounded and stripped of control characters before
+     * printing so a misbehaving control plane still cannot dictate what appears there.
+     */
+    const detail = await response.json().catch(() => null);
+    const message =
+      detail && typeof detail.message === "string"
+        ? detail.message.replace(/[\u0000-\u001f\u007f]/gu, " ").slice(0, 500)
+        : "this repository is beyond what your plan covers";
+    process.stdout.write(`Abloh: evidence not uploaded — ${message}\n`);
+    return 0;
+  }
   if (!response.ok) {
     /* The status is disclosed and the body is NOT: it is a remote string, and echoing it into a job
        log is how a service's internals end up in a customer's public build output. */
