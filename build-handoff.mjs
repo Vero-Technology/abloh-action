@@ -491,6 +491,18 @@ export function buildStructuralHandoff(evidence, ctx, sidecars) {
                 ? evidence.patchRevert.gapLocations.slice(0, 64).map((gap) => pick(gap, PATCH_REVERT_GAP_KEYS))
                 : null,
             },
+      /* The discovery receipt: the runner's discovered test FILE PATHS, and only the paths
+         (Kenneth's 2026-08-10 decision — paths may egress at tier >= 1; names, titles and source
+         never do). Copied by closed key — `files` and nothing beside it — and deliberately NOT
+         sliced or repaired here: the control plane re-validates the whole block and refuses it
+         WHOLE on any violation, so a trim on this side would turn a block the server must refuse
+         into one it accepts. Null when the run made no discovery claim. The TIER GATE lives on
+         the server (acceptTestDiscovery): the block travels at every tier so the tier-0 strip is
+         DISCLOSED in the stored egress audit rather than silently pre-empted on the runner. */
+      testDiscovery:
+        evidence.testDiscovery === null || evidence.testDiscovery === undefined
+          ? null
+          : { files: field(evidence.testDiscovery.files) },
     },
     /* Only what exists. An absent key is the ordinary case, which is why this is spread last rather
        than emitted as null: the receiver's key check treats it as optional, and a null would be a

@@ -248,7 +248,7 @@ test("the envelope carries exactly the keys the endpoint accepts", () => {
     "rawCoverageFormat", "mutationExecution", "mutationScope", "tier", "mutantsPlanned",
     "mutantsRun", "counts", "scores", "floor", "gate", "baseline", "findingCount",
     "findings", "policy", "rationalesDigest", "rawReportDigest", "skipBaseline",
-    "evidenceProfile", "packages", "mutantRoster", "patchRevert",
+    "evidenceProfile", "packages", "mutantRoster", "patchRevert", "testDiscovery",
     /* The redacted mutation report's commitment. Emitted unconditionally (null when the run
        produced no redacted report), so it belongs in the exact list, not the optional one. */
     "redactedReportDigest",
